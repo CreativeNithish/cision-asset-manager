@@ -1,97 +1,53 @@
 package com.cision.cisionassetmanager.service.impl;
 
 
+import com.amazonaws.services.s3.AmazonS3;
+import com.amazonaws.services.s3.model.ObjectListing;
+import com.amazonaws.services.s3.model.S3ObjectSummary;
 import com.cision.cisionassetmanager.service.CisionSFTPService;
-import com.jcraft.jsch.*;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.CollectionUtils;
+
 
 import java.util.List;
+
 
 
 @Service
 @Slf4j
 public class CisionSFTPServiceImp implements CisionSFTPService {
 
-    @Value("${sftp.host}")
-    private String host;
+    @Value("${cloud.aws.s3.bucket.name}")
+    String bucketName;
 
-    @Value("${sftp.port}")
-    private Integer port;
-
-    @Value("${sftp.username}")
-    private String username;
-
-    @Value("${sftp.password}")
-    private String password;
-
-    @Value("${sftp.sessionTimeout}")
-    private Integer sessionTimeout;
-
-    @Value("${sftp.channelTimeout}")
-    private Integer channelTimeout;
+    @Autowired
+    AmazonS3 s3Client;
 
     public void readAssets() {
-        ChannelSftp channelSftp = createChannelSftp();
-        try {
-            List<ChannelSftp.LsEntry> files = channelSftp.ls("upload");
-            files.forEach( CisionSFTPServiceImp::logFileStats);
-        } catch(SftpException   ex) {
-            log.error("Error download file", ex);
-        } finally {
-            disconnectChannelSftp(channelSftp);
-        }
-
-    }
-
-    private ChannelSftp createChannelSftp() {
-        try {
-            JSch jSch = new JSch();
-            Session session = jSch.getSession(username, host, port);
-            session.setConfig("StrictHostKeyChecking", "no");
-            session.setPassword(password);
-            session.connect(sessionTimeout);
-            Channel channel = session.openChannel("sftp");
-            channel.connect(channelTimeout);
-            return (ChannelSftp) channel;
-        } catch(JSchException ex) {
-            log.error("Create ChannelSftp error", ex);
-        }
-
-        return null;
-    }
-
-    private void disconnectChannelSftp(ChannelSftp channelSftp) {
-        try {
-            if( channelSftp == null)
-                return;
-
-            if(channelSftp.isConnected())
-                channelSftp.disconnect();
-
-            if(channelSftp.getSession() != null)
-                channelSftp.getSession().disconnect();
-
-        } catch(Exception ex) {
-            log.error("SFTP disconnect error", ex);
+        ObjectListing objectListing =  s3Client.listObjects(bucketName);
+        List<S3ObjectSummary> s3ObjectSummaryList = objectListing.getObjectSummaries();
+        if(!CollectionUtils.isEmpty(s3ObjectSummaryList)){
+            s3ObjectSummaryList.forEach(CisionSFTPServiceImp::logFileStats);
         }
     }
 
-    private static void logFileStats(ChannelSftp.LsEntry fileEntry) {
+    private static void logFileStats(S3ObjectSummary s3ObjectSummary) {
         try {
-            if (fileEntry.getFilename().toLowerCase().endsWith(".pdf") || fileEntry.getFilename().toLowerCase().endsWith(".xml")) {
-                long fileSizeInMegaBytes = ((fileEntry.getAttrs().getSize()) / 1024) / 1024;
+            if (s3ObjectSummary.getKey().toLowerCase().endsWith(".pdf") || s3ObjectSummary.getKey().toLowerCase().endsWith(".xml")) {
+                long fileSizeInMegaBytes = ((s3ObjectSummary.getSize()) / 1024) / 1024;
                 if (fileSizeInMegaBytes < 10)
-                    log.info("File name: {}, File size: {} MB", fileEntry.getFilename(), fileSizeInMegaBytes);
+                    log.info("File Details:: {}", s3ObjectSummary);
                 else
                     throw new Exception("File size exceeds more then 10 MB");
             } else {
                 throw new Exception("FileFormat not supported");
             }
         } catch (Exception e) {
-            log.error("File name: {}, errorMessage: {} ", fileEntry.getFilename(), e.getMessage());
+            log.error("File Details: {}, errorMessage: {} ", s3ObjectSummary, e.getMessage());
         }
     }
 }
